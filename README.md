@@ -77,7 +77,7 @@ npm run typecheck    # TypeScript 类型检查
 npm test             # 单元测试（48 项）
 npm run build        # 构建渲染层 + 主进程
 npm start            # 构建后直接启动
-npm run package      # 打包到 release/聚影TV-win32-x64（约 359MB，免安装）
+npm run package      # 打包到 release/聚影TV-win32-x64（约 250MB，免安装）
 npm run e2e          # 端到端冒烟测试（构建后启动真实应用，含真实播放）
 npm run e2e:packaged # 冒烟测试打包产物 exe
 npm run icon         # 重新生成 build/icon.ico / icon.png（需要 Pillow）
@@ -111,6 +111,8 @@ npm run android:prepare # 把 dist/ 与图标复制进 Android 工程（构建 A
 6. 产物在 `android/app/build/outputs/apk/release/app-release.apk`。
 
 仓库内置 `.github/workflows/android.yml`，在 Actions 中手动触发或推送 `v*` 标签即可自动构建并上传 `JuYingTV-Android-1.0.0.apk`；本地没有 Android 工具链时推荐使用该流程。
+
+当前 1.0.0 APK 已由 GitHub Actions 构建通过（[run 44348088252](https://github.com/Hatisa/JuYing-TV/actions/runs/44348088252)），产物约 460KB，已确认包含 `classes.dex`、`assets/www` 前端资源与 v2 签名；尚未在 Android 真机 / 模拟器上做安装与播放回归。
 
 ## 数据源
 
@@ -167,7 +169,7 @@ npm run android:prepare # 把 dist/ 与图标复制进 Android 工程（构建 A
 - 成人内容识别基于类型、片名与备注关键词，若采集源使用隐晦命名仍可能漏判，可在设置中停用对应源。
 - 暂不支持下载、弹幕、投屏、多语言字幕。
 - 采集源稳定性依赖第三方站点，若大量失效可在设置中替换。
-- Android APK 使用 debug 签名，仅用于侧载测试；未上架应用商店。部分 Android WebView 对 HLS / 编解码支持不一致，遇到无法播放可切换线路。
+- Android APK 使用 debug 签名，仅用于侧载测试；未上架应用商店。APK 已通过 CI 编译与内容检查，尚未在真机 / 模拟器上验证安装与播放；部分 Android WebView 对 HLS / 编解码支持不一致，遇到无法播放可切换线路。
 - 后续可加入：源列表订阅（LibreTV-SourceList / TVBOX 配置）、播放器手势与记忆音量、自动跳过片头、下载与离线缓存、全局快捷键、迷你模式。
 
 ## 许可

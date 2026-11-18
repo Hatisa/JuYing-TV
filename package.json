@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "聚影 TV - 桌面端影视聚合播放器",
+  "description": "聚影 TV - 桌面端与 Android 影视聚合播放器",
   "main": "dist-electron/main.cjs",
   "scripts": {
     "dev": "concurrently -k -n VITE,APP -c cyan,magenta \"vite\" \"npm:dev:app\"",
