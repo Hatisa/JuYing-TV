@@ -6,6 +6,15 @@
 
 > ⚠️ 本项目**不提供、不存储、不转码任何视频资源**，所有内容均来自第三方公开采集接口。请仅将本项目用于学习与技术研究，并遵守当地法律法规与内容版权。
 
+## 下载
+
+| 平台 | 文件 | 说明 |
+| --- | --- | --- |
+| Windows 10/11 x64 | [JuYingTV-1.0.0-win32-x64.zip](https://github.com/Hatisa/JuYing-TV/releases/latest/download/JuYingTV-1.0.0-win32-x64.zip) | 免安装压缩包，解压后运行 `JuYingTV.exe`（约 187MB） |
+| Android 7.0+ | [JuYingTV-Android-1.0.0.apk](https://github.com/Hatisa/JuYing-TV/releases/latest/download/JuYingTV-Android-1.0.0.apk) | debug 签名，允许「安装未知应用」后侧载（约 460KB） |
+
+> Windows 压缩包内是完整的 Electron 运行时，请整体解压，不要只单独拷贝 `JuYingTV.exe`。
+
 ## 功能
 
 - **聚合搜索**：并行查询多个采集源，按片名归并同一部作品，标注「N 源」，可换源播放。
