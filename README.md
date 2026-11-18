@@ -86,7 +86,7 @@ npm run typecheck    # TypeScript 类型检查
 npm test             # 单元测试（48 项）
 npm run build        # 构建渲染层 + 主进程
 npm start            # 构建后直接启动
-npm run package      # 打包到 release/聚影TV-win32-x64（约 250MB，免安装）
+npm run package      # 打包到 release/聚影TV-win32-x64（完整目录约 417MB，压缩包约 187MB）
 npm run e2e          # 端到端冒烟测试（构建后启动真实应用，含真实播放）
 npm run e2e:packaged # 冒烟测试打包产物 exe
 npm run icon         # 重新生成 build/icon.ico / icon.png（需要 Pillow）
