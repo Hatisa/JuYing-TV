@@ -1,0 +1,45 @@
+import { contextBridge, ipcRenderer } from 'electron';
+import type { AppBridge } from '../src/types';
+
+const api: AppBridge = {
+  store: {
+    read: () => ipcRenderer.invoke('store:read'),
+    write: (key, value) => ipcRenderer.invoke('store:write', key, value),
+  },
+  net: {
+    json: (req) => ipcRenderer.invoke('net:json', req),
+    text: (req) => ipcRenderer.invoke('net:text', req),
+  },
+  proxy: { info: () => ipcRenderer.invoke('proxy:info') },
+  source: { test: (url) => ipcRenderer.invoke('source:test', url) },
+  health: {
+    list: () => ipcRenderer.invoke('health:list'),
+    check: (keys) => ipcRenderer.invoke('health:check', keys),
+    onChange: (cb) => {
+      const handler = (_e: unknown, payload: any) => cb(payload);
+      ipcRenderer.on('health:update', handler);
+      return () => ipcRenderer.removeListener('health:update', handler);
+    },
+  },
+  douban: {
+    ratings: (titles) => ipcRenderer.invoke('douban:ratings', titles),
+    top: (limit) => ipcRenderer.invoke('douban:top', limit),
+  },
+  app: {
+    info: () => ipcRenderer.invoke('app:info'),
+    openExternal: (url) => ipcRenderer.invoke('app:open', url),
+    quit: () => ipcRenderer.invoke('app:quit'),
+  },
+  window: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
+    close: () => ipcRenderer.invoke('window:close'),
+    onMaximizedChange: (cb) => {
+      const handler = (_e: unknown, maximized: boolean) => cb(maximized);
+      ipcRenderer.on('window:maximized', handler);
+      return () => ipcRenderer.removeListener('window:maximized', handler);
+    },
+  },
+};
+
+contextBridge.exposeInMainWorld('api', api);

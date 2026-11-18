@@ -1,0 +1,20 @@
+node_modules/
+dist/
+dist-electron/
+release/
+screenshots/
+.e2e-user-data/
+.e2e-packaged-user-data/
+*.log
+.DS_Store
+.tmp/
+
+# Android 构建产物
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/src/main/assets/www/
+*.apk
+*.aab
+.idea/

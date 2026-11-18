@@ -1,0 +1,39 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.juying.tv'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.juying.tv'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+        resConfigs 'zh', 'en'
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix ''
+        }
+        release {
+            minifyEnabled false
+            shrinkResources false
+            // 侧载安装包使用 debug 签名，便于直接分发；上架应用商店时请替换为正式签名。
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
