@@ -13,9 +13,23 @@ import type {
   Settings,
   SourceTestResult,
 } from '../types';
+import { normalizeAiSettings } from './ai';
+import { DEFAULT_WEB_SEARCH, normalizeWebSearchConfig } from './web-search';
+import { searchWeb as runWebSearch, testWebSearch as runWebSearchTest, type WebSearchTransport } from './web-search-engine';
+import { MobileAiService } from './mobile-ai';
 import { DEFAULT_SOURCES } from './default-sources';
+import { emptyFreeAiState, makeFreeStatus } from './free-models';
 import { SLOW_MS } from './health';
 import { getHealthSources } from './source-registry';
+
+/** 联网搜索走本地服务时固定用桌面版 UA，避免 Bing / DuckDuckGo 返回移动版页面导致解析不到 */
+const MOBILE_WEB_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+/** 非桌面端没有免费模型池 */
+function unavailableFreeAi() {
+  return makeFreeStatus(emptyFreeAiState(), { enabled: false, autoCheckin: false, checking: false });
+}
 
 /** 浏览器环境下的兜底实现（仅在非 Electron / 非 Android 环境使用，便于开发调试） */
 const FALLBACK_KEY = 'juying:fallback-data';
@@ -32,6 +46,15 @@ const FALLBACK_SETTINGS: Settings = {
   homeSource: 'all',
   accent: 'rose',
   proxyEnabled: false,
+  ai: {
+    mode: 'auto',
+    autoCheckin: true,
+    baseUrl: '',
+    apiKey: '',
+    model: '',
+    freeChannels: [],
+  },
+  webSearch: { ...DEFAULT_WEB_SEARCH },
 };
 
 function fallbackSources() {
@@ -53,7 +76,12 @@ function loadFallback(): AppData {
     return {
       ...empty,
       ...parsed,
-      settings: { ...empty.settings, ...(parsed.settings || {}) },
+      settings: {
+        ...empty.settings,
+        ...(parsed.settings || {}),
+        ai: normalizeAiSettings({ ...empty.settings.ai, ...(parsed.settings?.ai || {}), mode: parsed.settings?.ai?.mode }),
+        webSearch: normalizeWebSearchConfig({ ...empty.settings.webSearch, ...(parsed.settings?.webSearch || {}) }),
+      },
       sources: Array.isArray(parsed.sources) && parsed.sources.length ? parsed.sources : empty.sources,
     };
   } catch {
@@ -99,6 +127,21 @@ const fallback: AppBridge = {
   douban: {
     ratings: async () => ({}),
     top: async () => [],
+  },
+  websearch: {
+    query: async (query) => ({ ok: false, provider: 'duckduckgo', query, results: [], error: '联网搜索目前仅支持电脑端', ms: 0 }),
+    test: async () => ({ ok: false, count: 0, error: '联网搜索目前仅支持电脑端', ms: 0 }),
+  },
+  ai: {
+    chat: async () => ({ ok: false, error: 'AI 助手目前仅支持电脑端' }),
+    test: async () => ({ ok: false, error: 'AI 助手目前仅支持电脑端' }),
+    free: {
+      status: async () => unavailableFreeAi(),
+      checkin: async () => unavailableFreeAi(),
+      test: async () => unavailableFreeAi(),
+      sync: async () => unavailableFreeAi(),
+      onChange: () => () => {},
+    },
   },
   app: {
     info: async () => ({ version: 'web', electron: '-', chrome: '-', platform: 'web', userData: '-' }),
@@ -155,6 +198,19 @@ function apiUrl(native: NativeApi, path: string, params: Record<string, string>)
   return base + path + '?' + query.toString();
 }
 
+/**
+ * 移动端请求统一走本地服务：GET 用查询串，POST 把 JSON 请求体原样交给本地服务转发。
+ * 这样 WebView 不会遇到跨域，也不会被同步 JSBridge 卡住。
+ */
+function mobileRequestInit(req: NetRequest): RequestInit {
+  const method = String(req.method || 'GET').toUpperCase() === 'POST' ? 'POST' : 'GET';
+  if (method === 'GET') return { cache: 'no-store' };
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const contentType = req.headers?.['Content-Type'] || req.headers?.['content-type'];
+  if (contentType) headers['Content-Type'] = contentType;
+  return { cache: 'no-store', method: 'POST', headers, body: req.body || '' };
+}
+
 async function mobileNetJson(native: NativeApi, req: NetRequest): Promise<NetJsonResult> {
   const started = performance.now();
   try {
@@ -163,7 +219,7 @@ async function mobileNetJson(native: NativeApi, req: NetRequest): Promise<NetJso
       timeout: String(req.timeoutMs ?? 15000),
       h: JSON.stringify(req.headers || {}),
     });
-    const res = await fetch(url, { cache: 'no-store' });
+    const res = await fetch(url, mobileRequestInit(req));
     const parsed = (await res.json()) as NetJsonResult;
     if (!parsed || typeof parsed !== 'object') {
       return { ok: false, error: '本地代理返回格式错误', ms: Math.round(performance.now() - started) };
@@ -175,20 +231,21 @@ async function mobileNetJson(native: NativeApi, req: NetRequest): Promise<NetJso
 }
 
 async function mobileNetText(native: NativeApi, req: NetRequest): Promise<NetTextResult> {
+  const started = performance.now();
   try {
     const url = apiUrl(native, '/api/text', {
       u: req.url,
       timeout: String(req.timeoutMs ?? 15000),
       h: JSON.stringify(req.headers || {}),
     });
-    const res = await fetch(url, { cache: 'no-store' });
+    const res = await fetch(url, mobileRequestInit(req));
     const parsed = (await res.json()) as NetTextResult;
     if (!parsed || typeof parsed !== 'object') {
-      return { ok: false, error: '本地代理返回格式错误' };
+      return { ok: false, error: '本地代理返回格式错误', ms: Math.round(performance.now() - started) };
     }
     return parsed;
   } catch (err: any) {
-    return { ok: false, error: err?.message || '网络请求失败' };
+    return { ok: false, error: err?.message || '网络请求失败', ms: Math.round(performance.now() - started) };
   }
 }
 
@@ -505,21 +562,70 @@ function createMobileBridge(native: NativeApi): AppBridge {
   const netJson = (req: NetRequest) => mobileNetJson(native, req);
   const netText = (req: NetRequest) => mobileNetText(native, req);
   const test = (url: string) => mobileSourceTest(native, url);
+
+  const readStore = async (): Promise<AppData> => {
+    const raw = parseJson<Partial<AppData>>(native.storeRead(), {});
+    return {
+      version: raw.version,
+      settings: {
+        ...MOBILE_DEFAULT_SETTINGS,
+        ...(raw.settings || {}),
+        ai: normalizeAiSettings({
+          ...MOBILE_DEFAULT_SETTINGS.ai,
+          ...(raw.settings?.ai || {}),
+          mode: raw.settings?.ai?.mode,
+        }),
+        webSearch: normalizeWebSearchConfig({
+          ...MOBILE_DEFAULT_SETTINGS.webSearch,
+          ...(raw.settings?.webSearch || {}),
+        }),
+      },
+      sources: Array.isArray(raw.sources) && raw.sources.length ? raw.sources : fallbackSources(),
+      liveSources: Array.isArray(raw.liveSources) ? raw.liveSources : [],
+      favorites: Array.isArray(raw.favorites) ? raw.favorites : [],
+      history: Array.isArray(raw.history) ? raw.history : [],
+      searchHistory: Array.isArray(raw.searchHistory) ? raw.searchHistory : [],
+      health: raw.health,
+      freeAi: raw.freeAi,
+    };
+  };
+
+  /** 联网搜索与 AI 都通过本地服务访问上游，绕开 WebView 跨域限制 */
+  const webTransport: WebSearchTransport = {
+    text: async (url, opts = {}) => {
+      const res = await netText({
+        url,
+        timeoutMs: opts.timeoutMs,
+        headers: { 'User-Agent': MOBILE_WEB_UA, ...(opts.headers || {}) },
+        method: opts.method,
+        body: opts.body,
+      });
+      return { ok: res.ok, status: res.status, text: res.text, error: res.error, ms: res.ms };
+    },
+    json: async (url, opts = {}) => {
+      const res = await netJson({ url, timeoutMs: opts.timeoutMs, headers: opts.headers, method: opts.method, body: opts.body });
+      return { ok: res.ok, status: res.status, data: res.data, error: res.error, ms: res.ms };
+    },
+  };
+
+  const mobileAi = new MobileAiService({
+    readAi: async () => (await readStore()).settings.ai,
+    readFreeAi: async () => (await readStore()).freeAi,
+    writeFreeAi: (state) => {
+      try {
+        return native.storeWrite('freeAi', JSON.stringify(state));
+      } catch {
+        return false;
+      }
+    },
+    json: netJson,
+    text: netText,
+  });
+  mobileAi.start();
+
   return {
     store: {
-      read: async () => {
-        const raw = parseJson<Partial<AppData>>(native.storeRead(), {});
-        return {
-          version: raw.version,
-          settings: { ...MOBILE_DEFAULT_SETTINGS, ...(raw.settings || {}) },
-          sources: Array.isArray(raw.sources) && raw.sources.length ? raw.sources : fallbackSources(),
-          liveSources: Array.isArray(raw.liveSources) ? raw.liveSources : [],
-          favorites: Array.isArray(raw.favorites) ? raw.favorites : [],
-          history: Array.isArray(raw.history) ? raw.history : [],
-          searchHistory: Array.isArray(raw.searchHistory) ? raw.searchHistory : [],
-          health: raw.health,
-        };
-      },
+      read: readStore,
       write: async (key, value) => {
         try {
           native.storeWrite(String(key), JSON.stringify(value));
@@ -542,6 +648,21 @@ function createMobileBridge(native: NativeApi): AppBridge {
     source: { test },
     health: mobileHealth(test),
     douban: mobileDouban(netJson),
+    websearch: {
+      query: (query, config) => runWebSearch(query, config, webTransport),
+      test: (config) => runWebSearchTest(config, webTransport),
+    },
+    ai: {
+      chat: (req) => mobileAi.chat(req),
+      test: (config) => mobileAi.testConnection(config),
+      free: {
+        status: () => mobileAi.status(),
+        checkin: () => mobileAi.checkin(),
+        test: () => mobileAi.testModels(),
+        sync: () => mobileAi.sync(),
+        onChange: (cb) => mobileAi.onChange(cb),
+      },
+    },
     app: {
       info: async () => {
         const info = parseJson<AppInfo>(native.appInfo(), {

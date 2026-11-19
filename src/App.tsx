@@ -10,6 +10,7 @@ import { useHealth } from './store/health';
 import { isMobile } from './lib/bridge';
 import HomePage from './pages/HomePage';
 import SearchPage from './pages/SearchPage';
+import AssistantPage from './pages/AssistantPage';
 import AdultPage from './pages/AdultPage';
 import ShortsPage from './pages/ShortsPage';
 import DetailPage from './pages/DetailPage';
@@ -74,6 +75,7 @@ export default function App() {
         <main className="app-main min-w-0 flex-1 overflow-y-auto">
           <Routes>
             <Route path="/" element={<HomePage />} />
+            <Route path="/assistant" element={<AssistantPage />} />
             <Route path="/search" element={<SearchPage />} />
             <Route path="/adult" element={<AdultPage />} />
             <Route path="/shorts" element={<ShortsPage />} />

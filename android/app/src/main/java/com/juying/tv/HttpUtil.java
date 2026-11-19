@@ -48,8 +48,18 @@ final class HttpUtil {
     }
 
     static Response get(String url, int timeoutMs, Map<String, String> headers) {
+        return request("GET", url, timeoutMs, headers, null);
+    }
+
+    /**
+     * 通用请求；method 只接受 GET / POST，body 仅对 POST 生效。
+     * AI 对话、Tavily、Serper 等接口都要求 POST JSON。
+     */
+    static Response request(String method, String url, int timeoutMs, Map<String, String> headers, String body) {
         long start = System.currentTimeMillis();
         int timeout = Math.max(2500, timeoutMs);
+        String verb = "POST".equalsIgnoreCase(method) ? "POST" : "GET";
+        byte[] payload = verb.equals("POST") && body != null ? body.getBytes(StandardCharsets.UTF_8) : null;
         HttpURLConnection conn = null;
         try {
             String current = url;
@@ -61,8 +71,24 @@ final class HttpUtil {
                 conn.setInstanceFollowRedirects(false);
                 conn.setConnectTimeout(Math.min(10000, timeout));
                 conn.setReadTimeout(timeout);
-                conn.setRequestMethod("GET");
+                conn.setRequestMethod(verb);
+                conn.setRequestProperty("Accept-Encoding", "gzip");
+                if (payload != null) {
+                    conn.setDoOutput(true);
+                    conn.setFixedLengthStreamingMode(payload.length);
+                    if (value(headers, "Content-Type") == null) {
+                        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                    }
+                }
                 applyHeaders(conn, headers, current);
+                if (payload != null) {
+                    java.io.OutputStream output = conn.getOutputStream();
+                    try {
+                        output.write(payload);
+                    } finally {
+                        output.close();
+                    }
+                }
 
                 int status = conn.getResponseCode();
                 if (status >= 300 && status < 400 && status != 304) {
@@ -73,6 +99,11 @@ final class HttpUtil {
                         return new Response(false, status, null, "", elapsed(start), "重定向缺少 Location");
                     }
                     current = new URL(new URL(current), location).toString();
+                    // 307/308 保留 POST 与请求体，其余重定向按浏览器行为降级为 GET
+                    if (status != 307 && status != 308) {
+                        verb = "GET";
+                        payload = null;
+                    }
                     continue;
                 }
 

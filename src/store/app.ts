@@ -10,6 +10,8 @@ import type {
   Settings,
   SourceConfig,
 } from '../types';
+import { normalizeAiSettings } from '../lib/ai';
+import { DEFAULT_WEB_SEARCH, normalizeWebSearchConfig } from '../lib/web-search';
 import { api } from '../lib/bridge';
 import { DEFAULT_SOURCES } from '../lib/default-sources';
 import { setHealthSources } from '../lib/source-registry';
@@ -58,6 +60,15 @@ const FALLBACK_SETTINGS: Settings = {
   homeSource: 'all',
   accent: 'rose',
   proxyEnabled: true,
+  ai: {
+    mode: 'auto',
+    autoCheckin: true,
+    baseUrl: '',
+    apiKey: '',
+    model: '',
+    freeChannels: [],
+  },
+  webSearch: { ...DEFAULT_WEB_SEARCH },
 };
 
 function applyTheme(settings: Settings): void {
@@ -111,7 +122,12 @@ export const useApp = create<AppState>((set, get) => ({
       }
       set({
         ready: true,
-        settings: { ...FALLBACK_SETTINGS, ...data.settings },
+        settings: {
+          ...FALLBACK_SETTINGS,
+          ...data.settings,
+          ai: normalizeAiSettings({ ...FALLBACK_SETTINGS.ai, ...(data.settings?.ai || {}), mode: data.settings?.ai?.mode }),
+          webSearch: normalizeWebSearchConfig({ ...FALLBACK_SETTINGS.webSearch, ...(data.settings?.webSearch || {}) }),
+        },
         sources: Array.isArray(data.sources) && data.sources.length > 0 ? data.sources : DEFAULT_SOURCES.map((s) => ({ ...s })),
         liveSources: data.liveSources,
         favorites: data.favorites,

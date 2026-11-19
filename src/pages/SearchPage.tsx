@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Check, Loader2, Pencil, SearchX, Trash2, X } from 'lucide-react';
+import AdultDiscover from '../components/AdultDiscover';
 import MediaCard from '../components/MediaCard';
 import SearchDiscover from '../components/SearchDiscover';
 import { EmptyState, PageHeader, SkeletonGrid } from '../components/States';
@@ -267,7 +268,7 @@ export default function SearchPage({ adultMode = false }: Props) {
           </div>
           <HistoryList scope={adultMode ? 'adult' : undefined} />
         </div>
-        {!adultMode && <SearchDiscover />}
+        {adultMode ? <AdultDiscover /> : <SearchDiscover />}
       </div>
     );
   }

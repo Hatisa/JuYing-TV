@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom';
-import { Clapperboard, Clock3, Film, Heart, Radio, Settings, ShieldAlert, Sparkles } from 'lucide-react';
+import { Bot, Clapperboard, Clock3, Film, Heart, Radio, Settings, ShieldAlert, Sparkles } from 'lucide-react';
 import { useApp } from '../store/app';
 import { FEATURES } from '../lib/features';
 
 const items = [
   { to: '/', label: '首页', icon: Film, end: true },
+  { to: '/assistant', label: 'AI 助手', icon: Bot },
   { to: '/search', label: '搜索', icon: Sparkles },
   { to: '/shorts', label: '短剧', icon: Clapperboard },
   { to: '/favorites', label: '收藏', icon: Heart },

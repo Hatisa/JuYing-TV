@@ -26,7 +26,7 @@ const paths = await packager({
     // 渲染层已由 Vite 打包、主进程已由 esbuild 打包，运行时只需要 Electron 与 Node 内置模块
     /^\/node_modules(\/|$)/,
     /^\/index\.html$/,
-    /^\/(src|tests|scripts|screenshots|release|electron)(\/|$)/,
+    /^\/(src|tests|scripts|screenshots|release|electron|android|build|\.github|\.tmp)(\/|$)/,
     /^\/\.(git|vscode|idea)(\/|$)/,
     /^\/\.e2e-[^/]+(\/|$)/,
     /^\/(tsconfig\.json|vite\.config\.ts|tailwind\.config\.js|postcss\.config\.js|package-lock\.json)$/,

@@ -1,10 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
+  Bot,
   Check,
   ChevronDown,
+  Eye,
+  EyeOff,
   ExternalLink,
   FolderOpen,
+  Globe2,
   Info,
+  KeyRound,
   Loader2,
   Palette,
   PlayCircle,
@@ -17,15 +22,27 @@ import {
   Trash2,
   Zap,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import ConfirmModal from '../components/ConfirmModal';
 import { PageHeader } from '../components/States';
+import { AI_PROVIDER_PRESETS, aiMode, isAiConfigured, isAiUsable } from '../lib/ai';
 import { api } from '../lib/bridge';
 import { FEATURES } from '../lib/features';
 import { DEFAULT_SOURCES } from '../lib/default-sources';
+import { freeModelStateLabel } from '../lib/free-models';
 import { formatMs, relativeTime, stateColor, stateLabel, summarize } from '../lib/health';
 import { useApp } from '../store/app';
 import { useHealth } from '../store/health';
-import type { AppInfo } from '../types';
+import { WEB_SEARCH_PROVIDERS, webSearchProviderName } from '../lib/web-search';
+import type { AiFreeStatus, AiTestResult, AppInfo, FreeModelChannel, WebSearchTestResult } from '../types';
+
+/** 常见免费额度供应商，快速填入地址与模型（Key 仍需自己填） */
+const FREE_CHANNEL_PRESETS: { name: string; baseUrl: string; model: string }[] = [
+  { name: 'OpenRouter 免费', baseUrl: 'https://openrouter.ai/api/v1', model: 'meta-llama/llama-3.3-70b-instruct:free' },
+  { name: 'Google AI Studio', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.0-flash' },
+  { name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile' },
+  { name: 'GitHub Models', baseUrl: 'https://models.inference.ai.azure.com', model: 'gpt-4o-mini' },
+];
 
 function Section({ title, icon, desc, children, collapsible = false, defaultOpen = true, summary }: {
   title: string;
@@ -113,10 +130,113 @@ export default function SettingsPage() {
   const [newLiveName, setNewLiveName] = useState('');
   const [newLiveUrl, setNewLiveUrl] = useState('');
   const [adultConfirm, setAdultConfirm] = useState(false);
+  const [showKey, setShowKey] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<AiTestResult | null>(null);
+  const [freeStatus, setFreeStatus] = useState<AiFreeStatus | null>(null);
+  const [freeBusy, setFreeBusy] = useState<'checkin' | 'test' | null>(null);
+  const [webTesting, setWebTesting] = useState(false);
+  const [webResult, setWebResult] = useState<WebSearchTestResult | null>(null);
+
+  const aiModeValue = aiMode(settings.ai);
+  const aiReady = isAiUsable(settings.ai);
+  const updateAi = (patch: Partial<typeof settings.ai>) => {
+    setTestResult(null);
+    updateSettings({ ai: { ...settings.ai, ...patch } });
+  };
+  const channels = settings.ai.freeChannels || [];
+  const updateChannels = (next: FreeModelChannel[]) => updateAi({ freeChannels: next });
+  const patchChannel = (id: string, patch: Partial<FreeModelChannel>) =>
+    updateChannels(channels.map((channel) => (channel.id === id ? { ...channel, ...patch } : channel)));
+  const addChannel = (preset?: { name: string; baseUrl: string; model: string }) => {
+    if (channels.length >= 8) return;
+    updateChannels([
+      ...channels,
+      {
+        id: 'ch-' + Date.now().toString(36),
+        name: preset?.name || '自定义通道 ' + (channels.length + 1),
+        baseUrl: preset?.baseUrl || '',
+        apiKey: '',
+        model: preset?.model || '',
+        enabled: true,
+      },
+    ]);
+  };
+  const removeChannel = (id: string) => updateChannels(channels.filter((channel) => channel.id !== id));
+  const updateWeb = (patch: Partial<typeof settings.webSearch>) => {
+    setWebResult(null);
+    updateSettings({ webSearch: { ...settings.webSearch, ...patch } });
+  };
+  const testWeb = async () => {
+    if (webTesting) return;
+    setWebTesting(true);
+    setWebResult(null);
+    try {
+      setWebResult(await api.websearch.test({ ...settings.webSearch, enabled: true }));
+    } catch (err: any) {
+      setWebResult({ ok: false, count: 0, error: err?.message || '联网搜索测试失败', ms: 0 });
+    } finally {
+      setWebTesting(false);
+    }
+  };
+  const testAi = async () => {
+    if (testing) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      setTestResult(await api.ai.test(settings.ai));
+    } catch (err: any) {
+      setTestResult({ ok: false, error: err?.message || '测试失败' });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   useEffect(() => {
     void api.app.info().then(setInfo).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    void api.ai.free
+      .status()
+      .then((status) => {
+        if (alive) setFreeStatus(status);
+      })
+      .catch(() => {});
+    const off = api.ai.free.onChange((status) => setFreeStatus(status));
+    return () => {
+      alive = false;
+      off();
+    };
+  }, []);
+
+  // 自定义通道修改后写入主进程并立即重建 Auto 池（不触发网络探测）
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const next = useApp.getState().settings;
+      void api.store
+        .write('settings', next)
+        .then(() => api.ai.free.sync())
+        .catch(() => {});
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [settings.ai.freeChannels]);
+
+  const runFreeCheck = async (kind: 'checkin' | 'test') => {
+    if (freeBusy) return;
+    setFreeBusy(kind);
+    setTestResult(null);
+    try {
+      const status = kind === 'checkin' ? await api.ai.free.checkin() : await api.ai.free.test();
+      setFreeStatus(status);
+    } catch (err: any) {
+      setTestResult({ ok: false, error: err?.message || '免费模型检测失败' });
+    } finally {
+      setFreeBusy(null);
+    }
+  };
+
 
   const summary = summarize(healthStatuses, sources.map((s) => s.key));
   const lastChecked = Math.max(0, ...sources.map((s) => healthStatuses[s.key]?.checkedAt || 0));
@@ -235,6 +355,538 @@ export default function SettingsPage() {
                 </select>
               </label>
             </div>
+          </div>
+        </Section>
+
+        <Section
+          title="AI 推荐助手"
+          icon={<Bot className="h-4 w-4" />}
+          desc="配置 OpenAI 兼容的模型供应商，用模糊剧情描述找片"
+          collapsible
+          defaultOpen={false}
+          summary={
+            aiModeValue === 'auto'
+              ? '免费 Auto' + (freeStatus ? ' · ' + freeStatus.available + ' 可用' : '')
+              : isAiConfigured(settings.ai)
+                ? settings.ai.model
+                : '未配置'
+          }
+        >
+          <div data-testid="ai-config-section" className="space-y-3.5">
+            <>
+                <div data-testid="ai-mode" className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    data-testid="ai-mode-auto"
+                    aria-pressed={aiModeValue === 'auto'}
+                    onClick={() => updateAi({ mode: 'auto' })}
+                    className={
+                      'rounded-xl border px-3 py-2.5 text-left transition-colors ' +
+                      (aiModeValue === 'auto'
+                        ? 'border-[var(--brand)] bg-[var(--brand-soft)]'
+                        : 'border-[var(--border)] bg-[var(--panel-2)] hover:border-[var(--border-strong)]')
+                    }
+                  >
+                    <div className="flex items-center gap-1.5 text-[12.5px] font-medium">
+                      <Zap className="h-3.5 w-3.5 text-[var(--brand)]" /> 免费 Auto
+                      <span className="rounded bg-[var(--brand-soft)] px-1.5 py-0.5 text-[10px] font-normal text-[var(--brand)]">
+                        无需 Key
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+                      内置免费模型池，自动选择可用模型；每天自动签到刷新额度。
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="ai-mode-custom"
+                    aria-pressed={aiModeValue === 'custom'}
+                    onClick={() => updateAi({ mode: 'custom' })}
+                    className={
+                      'rounded-xl border px-3 py-2.5 text-left transition-colors ' +
+                      (aiModeValue === 'custom'
+                        ? 'border-[var(--brand)] bg-[var(--brand-soft)]'
+                        : 'border-[var(--border)] bg-[var(--panel-2)] hover:border-[var(--border-strong)]')
+                    }
+                  >
+                    <div className="flex items-center gap-1.5 text-[12.5px] font-medium">
+                      <KeyRound className="h-3.5 w-3.5 text-[var(--brand)]" /> 自定义 API
+                    </div>
+                    <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+                      使用自己的 OpenAI 兼容供应商，适合已有 Key 或本地模型。
+                    </p>
+                  </button>
+                </div>
+
+                {aiModeValue === 'auto' ? (
+                  <div data-testid="ai-free-panel" className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3.5">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2 text-[13px] font-medium">
+                          免费模型池
+                          <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-normal text-emerald-400">
+                            Auto 自动选路
+                          </span>
+                        </div>
+                        <div className="mt-0.5 text-[11.5px] text-[var(--muted)]" data-testid="ai-free-summary">
+                          {freeStatus
+                            ? freeStatus.available > 0
+                              ? freeStatus.available + '/' + freeStatus.models.length + ' 个模型可用'
+                              : '暂未检测到可用模型'
+                            : '正在读取免费通道状态…'}
+                          {freeStatus?.lastResult ? ' · ' + freeStatus.lastResult : ''}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          data-testid="ai-free-checkin"
+                          className="btn btn-primary h-8 px-3 text-[12px]"
+                          onClick={() => void runFreeCheck('checkin')}
+                          disabled={!!freeBusy}
+                        >
+                          {freeBusy === 'checkin' ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          )}
+                          {freeBusy === 'checkin' ? '签到中…' : '一键签到'}
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="ai-free-test"
+                          className="btn btn-ghost h-8 px-3 text-[12px]"
+                          onClick={() => void runFreeCheck('test')}
+                          disabled={!!freeBusy}
+                        >
+                          {freeBusy === 'test' ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Zap className="h-3.5 w-3.5" />
+                          )}
+                          {freeBusy === 'test' ? '检测中…' : '一键检测全部免费模型'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2">
+                      <div>
+                        <div className="text-[12px]">每日自动签到</div>
+                        <div className="mt-0.5 text-[10.5px] text-[var(--muted)]">
+                          {freeStatus?.lastCheckinAt
+                            ? '上次签到：' + relativeTime(freeStatus.lastCheckinAt) + ' · 每日按北京时间刷新'
+                            : '启动后自动签到一次，之后每 30 分钟检查是否跨天'}
+                        </div>
+                      </div>
+                      <Toggle
+                        testId="ai-auto-checkin"
+                        value={settings.ai.autoCheckin !== false}
+                        onChange={(v) => updateAi({ autoCheckin: v })}
+                      />
+                    </div>
+
+                    <div data-testid="ai-channels" className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-1.5 text-[12px] font-medium">
+                            <Globe2 className="h-3.5 w-3.5 text-[var(--muted)]" />
+                            自定义免费通道
+                            <span className="rounded bg-[var(--brand-soft)] px-1.5 py-0.5 text-[10px] font-normal text-[var(--brand)]">
+                              自动加入 Auto
+                            </span>
+                          </div>
+                          <div className="mt-0.5 text-[10.5px] leading-relaxed text-[var(--muted)]">
+                            任意 OpenAI 兼容端点，填自己的免费额度 Key；与内置 Kilo / Pollinations 一起排序，无需 dsh 或任何账号登录。
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          data-testid="ai-channel-add"
+                          className="btn btn-ghost h-7 px-2.5 text-[11px]"
+                          onClick={() => addChannel()}
+                          disabled={channels.length >= 8}
+                        >
+                          <Plus className="h-3 w-3" /> 添加通道
+                        </button>
+                      </div>
+
+                      {channels.length === 0 ? (
+                        <div className="mt-2 rounded-lg border border-dashed border-[var(--border)] px-3 py-2.5 text-center text-[10.5px] text-[var(--muted)]">
+                          暂无自定义通道。可从下方预设开始，填入自己的 Key 后启用。
+                        </div>
+                      ) : (
+                        <div className="mt-2.5 space-y-2">
+                          {channels.map((channel, index) => (
+                            <div key={channel.id} data-testid="ai-channel" className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-2">
+                              <div className="flex items-center gap-2">
+                                <span className="grid h-5 w-5 shrink-0 place-items-center rounded bg-[var(--brand-soft)] text-[10px] text-[var(--brand)]">
+                                  {index + 1}
+                                </span>
+                                <input
+                                  data-testid="ai-channel-name"
+                                  className="input h-7 min-w-0 flex-1 text-[11px]"
+                                  value={channel.name}
+                                  onChange={(e) => patchChannel(channel.id, { name: e.target.value })}
+                                  placeholder="通道名称"
+                                  spellCheck={false}
+                                />
+                                <Toggle
+                                  testId="ai-channel-toggle"
+                                  value={channel.enabled}
+                                  onChange={(v) => patchChannel(channel.id, { enabled: v })}
+                                />
+                                <button
+                                  type="button"
+                                  data-testid="ai-channel-remove"
+                                  className="grid h-7 w-7 shrink-0 place-items-center rounded text-[var(--muted)] hover:bg-[var(--panel)] hover:text-red-400"
+                                  title="删除通道"
+                                  onClick={() => removeChannel(channel.id)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                              <div className="mt-1.5 grid gap-1.5 sm:grid-cols-3">
+                                <input
+                                  data-testid="ai-channel-url"
+                                  className="input h-7 text-[10.5px]"
+                                  value={channel.baseUrl}
+                                  onChange={(e) => patchChannel(channel.id, { baseUrl: e.target.value })}
+                                  placeholder="API 地址，如 https://api.groq.com/openai/v1"
+                                  spellCheck={false}
+                                />
+                                <input
+                                  data-testid="ai-channel-model"
+                                  className="input h-7 text-[10.5px]"
+                                  value={channel.model}
+                                  onChange={(e) => patchChannel(channel.id, { model: e.target.value })}
+                                  placeholder="模型名"
+                                  spellCheck={false}
+                                />
+                                <input
+                                  data-testid="ai-channel-key"
+                                  className="input h-7 text-[10.5px]"
+                                  type="password"
+                                  value={channel.apiKey}
+                                  onChange={(e) => patchChannel(channel.id, { apiKey: e.target.value })}
+                                  placeholder="API Key（本地模型可留空）"
+                                  spellCheck={false}
+                                  autoComplete="off"
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="mt-2.5">
+                        <div className="mb-1 text-[10.5px] text-[var(--muted)]">快捷添加常见免费额度供应商（仍需自己的 Key）</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {FREE_CHANNEL_PRESETS.map((preset) => (
+                            <button
+                              key={preset.name}
+                              type="button"
+                              className="chip text-[10.5px]"
+                              data-preset={preset.name}
+                              onClick={() => addChannel(preset)}
+                              disabled={channels.length >= 8}
+                              title={preset.baseUrl + ' · ' + preset.model}
+                            >
+                              {preset.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="mt-2 text-[10.5px] leading-relaxed text-[var(--muted)]">
+                        修改后自动保存并同步到 Auto 池；通道需要健康检测后才会参与选路，失败会自动切换下一个。
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      {(freeStatus?.models || []).map((m) => {
+                        const cooling = !!m.cooldownUntil && m.cooldownUntil > Date.now();
+                        return (
+                          <div
+                            key={m.id}
+                            data-testid="ai-free-model"
+                            data-state={m.state}
+                            className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2.5 py-2"
+                          >
+                            <span
+                              className="h-1.5 w-1.5 shrink-0 rounded-full"
+                              style={{ backgroundColor: stateColor(m.state) }}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 text-[11.5px]">
+                                <span className="shrink-0">{m.providerName}</span>
+                                <span className="truncate font-mono text-[10.5px] text-[var(--muted)]">{m.model}</span>
+                              </div>
+                              <div className="mt-0.5 truncate text-[10.5px] text-[var(--muted)]">
+                                {cooling
+                                  ? '冷却到 ' +
+                                    new Date(m.cooldownUntil as number).toLocaleTimeString('zh-CN', {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    }) +
+                                    (m.error ? ' · ' + m.error : '')
+                                  : m.error || freeModelStateLabel(m.state) + (m.checkedAt ? ' · ' + formatMs(m.ms) : '')}
+                              </div>
+                            </div>
+                            <span
+                              className={
+                                'shrink-0 text-[10.5px] ' +
+                                (m.state === 'online' || m.state === 'slow' ? 'text-emerald-400' : 'text-[var(--muted)]')
+                              }
+                            >
+                              {cooling ? '冷却中' : freeModelStateLabel(m.state)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      {(!freeStatus || freeStatus.models.length === 0) && (
+                        <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-3 text-center text-[11px] text-[var(--muted)]">
+                          还没有模型状态，点击「一键签到」开始检测。
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link to="/assistant" className="btn btn-primary h-8 px-3 text-[12px]">
+                        <Bot className="h-3.5 w-3.5" /> 打开 AI 助手
+                      </Link>
+                      {testResult && (
+                        <span
+                          data-testid="ai-test-result"
+                          className={'text-[11.5px] ' + (testResult.ok ? 'text-emerald-400' : 'text-red-400')}
+                        >
+                          {testResult.ok ? '连接成功' : testResult.error || '检测失败'}
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="text-[11px] leading-relaxed text-[var(--muted)]">
+                      内置 Kilo 公共网关与 Pollinations 匿名通道，无需 Key；自定义免费通道使用你自己的额度，所有 Key 仅保存在本机。繁忙或失败时会自动切换下一个模型；签到只刷新本机状态与每日额度，不涉及任何账号登录。
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3.5">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <div className="mb-1.5 text-[12.5px]">API 地址</div>
+                    <input
+                      data-testid="ai-base-url"
+                      className="input h-9 text-[12px]"
+                      value={settings.ai.baseUrl}
+                      onChange={(e) => updateAi({ baseUrl: e.target.value })}
+                      placeholder="https://api.deepseek.com"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="mb-1.5 text-[12.5px]">模型名称</div>
+                    <input
+                      data-testid="ai-model"
+                      className="input h-9 text-[12px]"
+                      value={settings.ai.model}
+                      onChange={(e) => updateAi({ model: e.target.value })}
+                      placeholder="deepseek-chat"
+                      spellCheck={false}
+                    />
+                  </label>
+                </div>
+
+                <label className="block">
+                  <div className="mb-1.5 flex items-center gap-1.5 text-[12.5px]">
+                    <KeyRound className="h-3.5 w-3.5 text-[var(--muted)]" />
+                    API Key
+                    <span className="text-[11px] font-normal text-[var(--muted)]">仅保存在本机；本地模型可留空</span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      data-testid="ai-api-key"
+                      className="input h-9 pr-10 text-[12px]"
+                      type={showKey ? 'text' : 'password'}
+                      value={settings.ai.apiKey}
+                      onChange={(e) => updateAi({ apiKey: e.target.value })}
+                      placeholder="sk-..."
+                      spellCheck={false}
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-1 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--text)]"
+                      onClick={() => setShowKey((v) => !v)}
+                      title={showKey ? '隐藏密钥' : '显示密钥'}
+                    >
+                      {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                </label>
+
+                <div>
+                  <div className="mb-1.5 text-[11.5px] text-[var(--muted)]">快捷填入常见供应商（仍需填 API Key）</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {AI_PROVIDER_PRESETS.map((preset) => (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        className="chip text-[11px]"
+                        data-preset={preset.name}
+                        onClick={() => updateAi({ baseUrl: preset.baseUrl, model: preset.model })}
+                        title={preset.baseUrl + ' · ' + preset.model}
+                      >
+                        {preset.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
+                  <button
+                    type="button"
+                    data-testid="ai-test"
+                    className="btn btn-primary h-8 px-3 text-[12px]"
+                    onClick={() => void testAi()}
+                    disabled={testing || !aiReady}
+                  >
+                    {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                    {testing ? '测试中…' : '测试连接'}
+                  </button>
+                  <Link to="/assistant" className="btn btn-ghost h-8 px-3 text-[12px]">
+                    <Bot className="h-3.5 w-3.5" /> 打开 AI 助手
+                  </Link>
+                  {testResult && (
+                    <span
+                      data-testid="ai-test-result"
+                      className={'text-[11.5px] ' + (testResult.ok ? 'text-emerald-400' : 'text-red-400')}
+                    >
+                      {testResult.ok
+                        ? '连接成功' + (testResult.model ? ' · ' + testResult.model : '') + (testResult.ms ? ' · ' + testResult.ms + 'ms' : '')
+                        : testResult.error || '连接失败'}
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-[11px] leading-relaxed text-[var(--muted)]">
+                  支持 OpenAI 兼容接口（DeepSeek、OpenAI、通义千问、Kimi、智谱、本地 Ollama 等）。API 地址可填写根地址、/v1，或完整的 /chat/completions；密钥仅保存在本机数据目录，不会上传到聚影服务器。
+                </p>
+                  </div>
+                )}
+              </>
+          </div>
+        </Section>
+
+        <Section
+          title="联网搜索"
+          icon={<Globe2 className="h-4 w-4" />}
+          desc="AI 助手回答前先搜索网页，补充影片资讯与最新信息"
+          collapsible
+          defaultOpen={false}
+          summary={settings.webSearch.enabled ? webSearchProviderName(settings.webSearch.provider) : '未开启'}
+        >
+          <div data-testid="websearch-config" className="space-y-3">
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2.5">
+              <div>
+                <div className="text-[12.5px]">启用联网搜索</div>
+                <div className="mt-0.5 text-[10.5px] leading-relaxed text-[var(--muted)]">
+                  开启后，AI 助手会先按你的剧情描述搜索网页，再把摘要作为参考上下文；搜索失败不会阻断推荐。
+                </div>
+              </div>
+              <Toggle
+                testId="websearch-toggle"
+                value={settings.webSearch.enabled}
+                onChange={(v) => updateWeb({ enabled: v })}
+              />
+            </div>
+
+            <div data-testid="websearch-providers" className="grid gap-2 sm:grid-cols-3">
+              {WEB_SEARCH_PROVIDERS.map((provider) => {
+                const active = settings.webSearch.provider === provider.value;
+                return (
+                  <button
+                    key={provider.value}
+                    type="button"
+                    data-testid={'websearch-provider-' + provider.value}
+                    aria-pressed={active}
+                    onClick={() => updateWeb({ provider: provider.value })}
+                    className={
+                      'rounded-xl border px-3 py-2 text-left transition-colors ' +
+                      (active
+                        ? 'border-[var(--brand)] bg-[var(--brand-soft)]'
+                        : 'border-[var(--border)] bg-[var(--panel-2)] hover:border-[var(--border-strong)]')
+                    }
+                  >
+                    <div className="text-[12px] font-medium">{provider.name}</div>
+                    <div className="mt-0.5 text-[10.5px] leading-relaxed text-[var(--muted)]">{provider.hint}</div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {settings.webSearch.provider !== 'duckduckgo' && settings.webSearch.provider !== 'bing' && (
+              <label className="block">
+                <div className="mb-1.5 flex items-center gap-1.5 text-[12.5px]">
+                  <KeyRound className="h-3.5 w-3.5 text-[var(--muted)]" />
+                  {webSearchProviderName(settings.webSearch.provider)} API Key
+                  <span className="text-[11px] font-normal text-[var(--muted)]">仅保存在本机</span>
+                </div>
+                <input
+                  data-testid="websearch-key"
+                  className="input h-9 text-[12px]"
+                  type="password"
+                  value={settings.webSearch.apiKey}
+                  onChange={(e) => updateWeb({ apiKey: e.target.value })}
+                  placeholder="填写搜索服务的 API Key"
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+              </label>
+            )}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <div className="mb-1.5 text-[12.5px]">注入 AI 的结果条数</div>
+                <select
+                  data-testid="websearch-max"
+                  className="input py-1.5 text-[12.5px]"
+                  value={settings.webSearch.maxResults}
+                  onChange={(e) => updateWeb({ maxResults: Number(e.target.value) })}
+                >
+                  {[2, 3, 4, 5, 6].map((n) => (
+                    <option key={n} value={n}>
+                      {n} 条
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex flex-col justify-end">
+                <button
+                  type="button"
+                  data-testid="websearch-test"
+                  className="btn btn-primary h-9 px-3 text-[12px]"
+                  onClick={() => void testWeb()}
+                  disabled={webTesting || !settings.webSearch.enabled}
+                >
+                  {webTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Globe2 className="h-3.5 w-3.5" />}
+                  {webTesting ? '搜索中…' : '测试搜索'}
+                </button>
+              </div>
+            </div>
+
+            {webResult && (
+              <div
+                data-testid="websearch-result"
+                className={'text-[11.5px] ' + (webResult.ok ? 'text-emerald-400' : 'text-red-400')}
+              >
+                {webResult.ok
+                  ? '搜索成功 · 返回 ' + webResult.count + ' 条结果' + (webResult.ms ? ' · ' + webResult.ms + 'ms' : '')
+                  : webResult.error || '搜索失败'}
+              </div>
+            )}
+
+            <p className="text-[11px] leading-relaxed text-[var(--muted)]">
+              搜索在主进程发起，绕过跨域限制。DuckDuckGo 免 Key，可能被限流；Tavily / Serper 更稳定，需要你自己的 Key。搜索结果只作为 AI 的参考片段，不会改变片库数据；助手会单独列出参考来源。
+            </p>
           </div>
         </Section>
 

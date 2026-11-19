@@ -25,6 +25,25 @@ const api: AppBridge = {
     ratings: (titles) => ipcRenderer.invoke('douban:ratings', titles),
     top: (limit) => ipcRenderer.invoke('douban:top', limit),
   },
+  websearch: {
+    query: (query, config) => ipcRenderer.invoke('websearch:query', query, config),
+    test: (config) => ipcRenderer.invoke('websearch:test', config),
+  },
+  ai: {
+    chat: (req) => ipcRenderer.invoke('ai:chat', req),
+    test: (config) => ipcRenderer.invoke('ai:test', config),
+    free: {
+      status: () => ipcRenderer.invoke('ai:free-status'),
+      checkin: () => ipcRenderer.invoke('ai:free-checkin'),
+      test: () => ipcRenderer.invoke('ai:free-test'),
+      sync: () => ipcRenderer.invoke('ai:free-sync'),
+      onChange: (cb) => {
+        const handler = (_e: unknown, payload: any) => cb(payload);
+        ipcRenderer.on('ai:free-update', handler);
+        return () => ipcRenderer.removeListener('ai:free-update', handler);
+      },
+    },
+  },
   app: {
     info: () => ipcRenderer.invoke('app:info'),
     openExternal: (url) => ipcRenderer.invoke('app:open', url),

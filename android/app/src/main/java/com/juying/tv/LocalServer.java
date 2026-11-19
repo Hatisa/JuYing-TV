@@ -43,9 +43,10 @@ import org.json.JSONTokener;
 final class LocalServer {
 
     private static final int MAX_IMAGE = 15 * 1024 * 1024;
+    private static final int MAX_POST_BODY = 1024 * 1024;
     private static final String CORS = "Access-Control-Allow-Origin: *\r\n"
-            + "Access-Control-Allow-Headers: Range, Content-Type, Accept, Origin\r\n"
-            + "Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n";
+            + "Access-Control-Allow-Headers: Range, Content-Type, Accept, Origin, Authorization, X-API-KEY\r\n"
+            + "Access-Control-Allow-Methods: GET, HEAD, POST, OPTIONS\r\n";
 
     private final Context context;
     private final LruCache<String, ImageEntry> imageCache = new LruCache<String, ImageEntry>(32 * 1024 * 1024) {
@@ -148,9 +149,19 @@ final class LocalServer {
                 }
             }
 
-            if (!"GET".equals(method) && !"HEAD".equals(method) && !"OPTIONS".equals(method)) {
-                fail(out, 405, "Method Not Allowed", "GET".equals(method) || "HEAD".equals(method));
+            if (!"GET".equals(method) && !"HEAD".equals(method) && !"POST".equals(method) && !"OPTIONS".equals(method)) {
+                fail(out, 405, "Method Not Allowed", "HEAD".equals(method));
                 return;
+            }
+
+            // POST 用于 AI 对话与 Tavily / Serper 等需要请求体的接口
+            String requestBody = null;
+            if ("POST".equals(method)) {
+                requestBody = readBody(in, headers.get("content-length"));
+                if (requestBody == null) {
+                    fail(out, 413, "Payload Too Large", false);
+                    return;
+                }
             }
 
             String rawPath = target;
@@ -200,7 +211,7 @@ final class LocalServer {
                 return;
             }
             if (apiPath) {
-                serveApi(out, rawPath, query, upstream, "HEAD".equals(method));
+                serveApi(out, rawPath, query, upstream, "HEAD".equals(method), method, requestBody);
                 return;
             }
             String referer = query.get("r");
@@ -275,6 +286,36 @@ final class LocalServer {
         writeBytes(out, 200, "OK", type, body, cache, head);
     }
 
+    /** 读取 POST 请求体；超过上限返回 null */
+    private String readBody(InputStream in, String lengthHeader) throws IOException {
+        int length = 0;
+        if (lengthHeader != null) {
+            try {
+                length = Integer.parseInt(lengthHeader.trim());
+            } catch (Exception ignored) {
+                length = 0;
+            }
+        }
+        if (length > MAX_POST_BODY) {
+            return null;
+        }
+        if (length == 0) {
+            return "";
+        }
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream(Math.max(length, 256));
+        byte[] chunk = new byte[8192];
+        int total = 0;
+        while (total < length) {
+            int read = in.read(chunk, 0, Math.min(chunk.length, length - total));
+            if (read < 0) {
+                break;
+            }
+            total += read;
+            buffer.write(chunk, 0, read);
+        }
+        return buffer.toString(StandardCharsets.UTF_8.name());
+    }
+
     private byte[] readAsset(String path) throws IOException {
         try (InputStream stream = context.getAssets().open(path)) {
             return readAll(stream, 48 * 1024 * 1024);
@@ -282,14 +323,15 @@ final class LocalServer {
     }
 
     private void serveApi(OutputStream out, String path, Map<String, String> query, String upstream,
-                          boolean head) throws IOException {
+                          boolean head, String method, String requestBody) throws IOException {
         int timeout = 15000;
         try {
             timeout = Integer.parseInt(query.getOrDefault("timeout", "15000"));
         } catch (Exception ignored) {
             timeout = 15000;
         }
-        timeout = Math.max(1000, Math.min(30000, timeout));
+        // AI 对话最长 60s，本地服务需要比它更宽裕
+        timeout = Math.max(1000, Math.min(65000, timeout));
         long start = System.currentTimeMillis();
         JSONObject result = new JSONObject();
         try {
@@ -302,7 +344,7 @@ final class LocalServer {
                 return;
             }
             Map<String, String> reqHeaders = parseHeaderJson(query.get("h"));
-            HttpUtil.Response response = HttpUtil.get(upstream, timeout, reqHeaders);
+            HttpUtil.Response response = HttpUtil.request(method, upstream, timeout, reqHeaders, requestBody);
             result.put("ok", response.ok);
             result.put("status", response.status);
             result.put("ms", response.ms);

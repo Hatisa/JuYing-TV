@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom';
-import { Clapperboard, Clock3, Film, Heart, Search, Settings, ShieldAlert } from 'lucide-react';
+import { Bot, Clapperboard, Clock3, Film, Heart, Search, Settings, ShieldAlert } from 'lucide-react';
 import { useApp } from '../store/app';
 
 const baseItems = [
   { to: '/', label: '首页', icon: Film, end: true },
   { to: '/search', label: '搜索', icon: Search },
+  { to: '/assistant', label: 'AI', icon: Bot },
   { to: '/shorts', label: '短剧', icon: Clapperboard },
   { to: '/favorites', label: '收藏', icon: Heart },
   { to: '/history', label: '历史', icon: Clock3 },

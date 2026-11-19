@@ -45,10 +45,16 @@ export interface FetchResult {
   error?: string;
 }
 
-export async function fetchText(
-  url: string,
-  opts: { timeoutMs?: number; headers?: Record<string, string> } = {}
-): Promise<FetchResult> {
+export interface FetchOptions {
+  timeoutMs?: number;
+  headers?: Record<string, string>;
+  /** 默认 GET；AI 接口需要 POST */
+  method?: string;
+  /** 请求体（字符串） */
+  body?: string;
+}
+
+export async function fetchText(url: string, opts: FetchOptions = {}): Promise<FetchResult> {
   const start = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 15000);
@@ -56,7 +62,9 @@ export async function fetchText(
   try {
     if (!/^https?:\/\//i.test(url)) throw new Error('仅支持 http/https 地址');
     const res = await doFetch(url, {
+      method: opts.method || 'GET',
       headers: { ...DEFAULT_HEADERS, ...(opts.headers || {}) },
+      body: opts.body,
       signal: controller.signal,
       redirect: 'follow',
     } as any);
@@ -77,7 +85,7 @@ export async function fetchText(
   }
 }
 
-export async function fetchJson(url: string, opts: { timeoutMs?: number; headers?: Record<string, string> } = {}): Promise<NetJsonResult> {
+export async function fetchJson(url: string, opts: FetchOptions = {}): Promise<NetJsonResult> {
   const res = await fetchText(url, opts);
   if (!res.ok) {
     return { ok: false, status: res.status, error: res.error || `HTTP ${res.status}`, ms: res.ms };

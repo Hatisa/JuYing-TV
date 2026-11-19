@@ -1,5 +1,6 @@
 import { app, BrowserWindow, session, shell } from 'electron';
 import path from 'node:path';
+import { FreeModelService } from './free-models';
 import { HealthMonitor } from './health';
 import { registerIpc } from './ipc';
 import { startMediaProxy, type ProxyHandle } from './proxy';
@@ -18,6 +19,7 @@ let win: BrowserWindow | null = null;
 let proxy: ProxyHandle | null = null;
 let store: Store | null = null;
 let health: HealthMonitor | null = null;
+let freeAi: FreeModelService | null = null;
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -91,9 +93,11 @@ app.whenReady().then(async () => {
     (statuses) => store?.write('health', statuses)
   );
   health.seed(store.read().health);
-  registerIpc(store, proxy, health);
+  freeAi = new FreeModelService(store);
+  registerIpc(store, proxy, health, freeAi);
   createWindow();
   health.start();
+  freeAi.start();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -106,6 +110,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   health?.stop();
+  freeAi?.stop();
   store?.flush();
   proxy?.close();
 });

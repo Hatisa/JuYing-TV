@@ -1,4 +1,5 @@
 import type { LiveSource, Settings } from '../src/types';
+import { DEFAULT_WEB_SEARCH } from '../src/lib/web-search';
 import { DEFAULT_SOURCES } from '../src/lib/default-sources';
 
 export { DEFAULT_SOURCES };
@@ -24,4 +25,13 @@ export const DEFAULT_SETTINGS: Settings = {
   homeSource: 'all',
   accent: 'rose',
   proxyEnabled: true,
+  ai: {
+    mode: 'auto',
+    autoCheckin: true,
+    baseUrl: '',
+    apiKey: '',
+    model: '',
+    freeChannels: [],
+  },
+  webSearch: { ...DEFAULT_WEB_SEARCH },
 };

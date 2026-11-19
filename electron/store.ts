@@ -2,10 +2,11 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AppData } from '../src/types';
+import { normalizeAiSettings } from '../src/lib/ai';
 import { DEFAULT_LIVE_SOURCES, DEFAULT_SETTINGS, DEFAULT_SOURCES, SOURCES_VERSION } from './defaults';
 
 const HISTORY_LIMIT = 300;
-const WRITABLE_KEYS: (keyof AppData)[] = ['settings', 'sources', 'liveSources', 'favorites', 'history', 'health', 'searchHistory'];
+const WRITABLE_KEYS: (keyof AppData)[] = ['settings', 'sources', 'liveSources', 'favorites', 'history', 'health', 'searchHistory', 'freeAi'];
 
 function defaults(): AppData {
   return {
@@ -38,6 +39,7 @@ export class Store {
       const parsed = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       const base = defaults();
       const version = Number(parsed?.version) || 1;
+      const parsedAi = parsed?.settings?.ai && typeof parsed.settings.ai === 'object' ? parsed.settings.ai : {};
       let sources = Array.isArray(parsed?.sources) ? parsed.sources : base.sources;
       // 版本升级：把新增的内置源补进旧数据，用户已有的启停状态与自定义源保持不变
       if (version < SOURCES_VERSION) {
@@ -48,13 +50,19 @@ export class Store {
       }
       return {
         version: SOURCES_VERSION,
-        settings: { ...base.settings, ...(parsed?.settings || {}) },
+        settings: {
+          ...base.settings,
+          ...(parsed?.settings || {}),
+          // mode 显式传 undefined：旧数据没有 mode 时按是否填过地址迁移为 custom
+          ai: normalizeAiSettings({ ...base.settings.ai, ...parsedAi, mode: parsedAi.mode }),
+        },
         sources,
         liveSources: Array.isArray(parsed?.liveSources) ? parsed.liveSources : base.liveSources,
         favorites: Array.isArray(parsed?.favorites) ? parsed.favorites : [],
         history: Array.isArray(parsed?.history) ? parsed.history : [],
         health: parsed?.health && typeof parsed.health === 'object' ? parsed.health : undefined,
         searchHistory: Array.isArray(parsed?.searchHistory) ? parsed.searchHistory.slice(0, 40) : [],
+        freeAi: parsed?.freeAi && typeof parsed.freeAi === 'object' ? parsed.freeAi : undefined,
       };
     } catch {
       return defaults();

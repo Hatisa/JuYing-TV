@@ -49,11 +49,11 @@ jobs:
         working-directory: android
 
       - name: Collect APK
-        run: cp app/build/outputs/apk/release/app-release.apk ../JuYingTV-Android-1.0.0.apk
+        run: cp app/build/outputs/apk/release/app-release.apk ../JuYingTV-Android-1.0.1.apk
         working-directory: android
 
       - uses: actions/upload-artifact@v4
         with:
           name: JuYingTV-Android
-          path: JuYingTV-Android-1.0.0.apk
+          path: JuYingTV-Android-1.0.1.apk
           if-no-files-found: error
