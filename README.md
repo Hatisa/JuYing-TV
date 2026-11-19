@@ -125,7 +125,7 @@ npm run android:prepare # 把 dist/ 与图标复制进 Android 工程（构建 A
 
 仓库内置 `.github/workflows/android.yml`，在 Actions 中手动触发或推送 `v*` 标签即可自动构建并上传 `JuYingTV-Android-1.0.1.apk`；本地没有 Android 工具链时推荐使用该流程。
 
-当前 1.0.0 APK 已由 GitHub Actions 构建通过（[run 44348088252](https://github.com/Hatisa/JuYing-TV/actions/runs/44348088252)），产物约 460KB，已确认包含 `classes.dex`、`assets/www` 前端资源与 v2 签名；尚未在 Android 真机 / 模拟器上做安装与播放回归。
+当前 1.0.1 APK 已由 GitHub Actions 构建通过（[run 44568554083](https://github.com/Hatisa/JuYing-TV/actions/runs/44568554083)），产物约 481KB，已确认包含 `classes.dex`、`assets/www` 前端资源与 v2 签名；尚未在 Android 真机 / 模拟器上做安装与播放回归。
 
 ## AI 推荐助手
 
