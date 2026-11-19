@@ -108,7 +108,7 @@ final class HttpUtil {
                 }
 
                 InputStream raw = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
-                byte[] body = new byte[0];
+                byte[] responseBody = new byte[0];
                 if (raw != null) {
                     InputStream stream = raw;
                     String encoding = conn.getHeaderField("Content-Encoding");
@@ -116,14 +116,14 @@ final class HttpUtil {
                         stream = new GZIPInputStream(raw);
                     }
                     try {
-                        body = readAll(stream);
+                        responseBody = readAll(stream);
                     } finally {
                         stream.close();
                     }
                 }
                 String type = conn.getContentType();
                 boolean ok = status >= 200 && status < 300;
-                return new Response(ok, status, body, type, elapsed(start), ok ? null : "HTTP " + status);
+                return new Response(ok, status, responseBody, type, elapsed(start), ok ? null : "HTTP " + status);
             }
             return new Response(false, 0, null, "", elapsed(start), "重定向次数过多");
         } catch (java.net.SocketTimeoutException e) {
